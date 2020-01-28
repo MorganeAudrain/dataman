@@ -16,6 +16,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# disable font_manager spamming the debug log
+# logging.getLogger('matplotlib').disabled = True
+logging.getLogger('matplotlib.fontmanager').disabled = True
+logging.getLogger('matplotlib.font_manager').disabled = True
+
 WRITE_DATA = True
 FORMATS = {fmt.FMT_NAME.lower(): fmt for fmt in get_valid_formats()}
 
@@ -55,7 +60,6 @@ def continuous_to_dat(target_metadata, output_path, channel_group,
                       file_mode='w', chunk_records=1000, duration=0,
                       dead_channel_ids=None, zero_dead_channels=True):
     start_t = time.time()
-
     # Logging
     file_handler = logging.FileHandler(output_path + '.log')
     formatter = logging.Formatter('%(message)s')
@@ -292,6 +296,8 @@ def main(args):
 
     out_fext = format_output.FMT_FEXT
     out_prefix = cli_args.out_prefix if cli_args.out_prefix is not None else op.basename(cli_args.target[0])
+    if out_prefix =='':
+        out_prefix ='lost_name'
     logger.debug('Prefix: {}'.format(out_prefix))
     default_template = DEFAULT_FULL_TEMPLATE if cli_args.fname_channels else DEFAULT_SHORT_TEMPLATE
     fname_template = default_template if cli_args.template_fname is None else cli_args.template_fname

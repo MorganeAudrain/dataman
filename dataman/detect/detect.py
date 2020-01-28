@@ -16,6 +16,7 @@ import dataman.lib.report
 from dataman.detect import report
 from dataman.lib.util import butter_bandpass
 
+
 logger = logging.getLogger(__name__)
 
 # disable font_manager spamming the debug log
@@ -337,7 +338,9 @@ def extract_waveforms(timestamps, arr, outpath, s_pre=8, s_post=24, lc=300, hc=6
     n_samples = s_pre + s_post
     n_channels = arr.shape[1]
 
+
     b, a = butter_bandpass(lc, hc, fs)
+
 
     # samples to cut around detection (threshold crossing)
     n_samples = s_pre + s_post

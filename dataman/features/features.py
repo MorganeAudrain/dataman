@@ -13,6 +13,7 @@ from tqdm.auto import tqdm
 
 from dataman.lib.report import fig2html, ds_shade_waveforms, ds_plot_waveforms, ds_shade_feature, ds_plot_features
 from dataman.lib.util import run_prb
+from scipy.ndimage import gaussian_filter
 
 PRECISION = np.dtype(np.single)
 N_SAMPLES = 32
@@ -180,7 +181,6 @@ def write_feature_fd(feature_names, feature_data, timestamps, outpath, tetrode_p
                                 }, compress=False, truncate_existing=True, truncate_invalid_matlab=True,
                 appendmat=False)
 
-
 def main(args):
     parser = argparse.ArgumentParser('Generate .fet and .fd files for features from spike waveforms')
     parser.add_argument('-v', '--verbose', action='store_true', help="Verbose (debug) output")
@@ -203,6 +203,7 @@ def main(args):
 
     # TODO:
     # per feature arguments
+    sigma = 0.8
 
     for nt, matfile in tqdm(enumerate(matfiles), total=len(matfiles)):
         outpath = matfile.parent / 'FD'
@@ -225,8 +226,8 @@ def main(args):
 
         hf = h5py.File(matfile, 'r')
         waveforms = np.array(hf['spikes'], dtype=PRECISION).reshape(N_SAMPLES, N_CHANNELS, -1)
-
         timestamps = np.array(hf['index'], dtype='double')
+        gauss= gaussian_filter(waveforms,sigma)
         # indices = timestamps * sampling_rate / 1e4
 
         features = {}
@@ -277,7 +278,7 @@ def main(args):
 
             frf.write('<h2>Waveforms (n={})</h2>'.format(waveforms.shape[2]))
             density_agg = 'log'
-            images = ds_shade_waveforms(waveforms, how=density_agg)
+            images = ds_shade_waveforms(gauss, how=density_agg)
             fig = ds_plot_waveforms(images, density_agg)
             frf.write(fig2html(fig) + '</br>')
             del fig
