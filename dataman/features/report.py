@@ -1,8 +1,16 @@
-import numpy as np
+import logging
+
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
+import numpy as np
 
 plt.rcParams['figure.figsize'] = 15, 8
+
+logger = logging.getLogger(__name__)
+
+# disable font_manager spamming the debug log
+# logging.getLogger('matplotlib').disabled = True
+logging.getLogger('matplotlib.fontmanager').disabled = True
+logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 # def plot_waveforms_grid(wv, n_rows=10, n_cols=20, n_overlay=10000):

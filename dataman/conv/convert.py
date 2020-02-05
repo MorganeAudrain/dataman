@@ -45,14 +45,16 @@ def expand_sessions(lot):
     paths into the target list.
     """
     targets = []
-    for t in lot:
-        if t.endswith('.session'):
-            with open(t, 'r') as session_file:
-                session_items = [tp.strip() for tp in session_file.readlines()]
-                logger.info("Expanding session file '{}' with {} targets".format(t, len(session_items)))
+    for target_path in lot:
+        if target_path.endswith('.session') or target_path.endswith('.txt'):
+            with open(target_path, 'r') as sf:
+                session_items = [tp.strip() for tp in sf.readlines() if len(tp.strip())]
+                logger.info(f"Expanding session file '{target_path}' with {len(session_items)} targets")
                 targets.extend(session_items)
-        else:
-            targets.append(t)
+
+        elif len(target_path):
+            targets.append(target_path)
+    logger.debug(f'Targets paths post expansion: {targets}')
     return targets
 
 
@@ -110,7 +112,7 @@ def continuous_to_dat(target_metadata, output_path, channel_group,
                     else min(n_blocks, int(duration * sampling_rate // block_size))
                 if records_left < 1:
                     epsilon = 1 / sampling_rate * block_size * 1000
-                    logger.warning(
+                    logger.warning(at
                         "Remaining duration limit ({:.0f} ms) less than duration of single block ({:.0f} ms). "
                         "Skipping target.".format(duration * 1000, epsilon))
                     return 0
@@ -215,9 +217,12 @@ def main(args):
     logger.debug('Arguments: {}'.format(cli_args))
 
     if cli_args.remove_trailing_zeros:
-        raise NotImplementedError("Can't remove trailing zeros just yet.")
+        raise NotImplementedError("Trailing zero removal not implemented (also not a good idea to begin with...)")
 
     targets = [op.abspath(op.expanduser(t)) for t in expand_sessions(cli_args.target)]
+    target_exists = [t for t in targets if op.exists(t)]
+    if not all(target_exists):
+        raise FileNotFoundError(f'Invalid targets found: {[t for ok, t in zip(target_exists, targets) if not ok]}')
 
     formats = list(set([util.detect_format(target) for target in targets]))
 
@@ -237,6 +242,19 @@ def main(args):
 
     # One of channel_count, channel_list, layout_file path from mutex parser group channel_group
     layout = None
+    layout_file = None
+
+    if cli_args.layout is not None:
+        layout_file = Path(cli_args.layout).resolve()
+
+    # if no .prb file specified, check if there is one matching the name of the session
+    else:
+        for target in cli_args.target:
+            layout_file = Path(target).with_suffix('.prb').resolve()
+            if layout_file.exists():
+                logger.warning(f'Using probe file {layout_file.name} matching session file name.')
+                break
+
     if cli_args.channel_count is not None:
         channel_groups = {0: {'channels': list(range(cli_args.channel_count)),
                               'dead_channels': dead_channels}}
@@ -245,9 +263,9 @@ def main(args):
         channel_groups = {0: {'channels': cli_args.channel_list,
                               'dead_channels': dead_channels}}
 
-    elif cli_args.layout is not None:
-        layout = util.run_prb(op.abspath(op.expanduser(cli_args.layout)))
-        logger.debug('Opened layout file {}'.format(layout))
+    elif layout_file:
+        logger.debug(f'Reading layout file {layout_file}')
+        layout = util.run_prb(layout_file)
         if cli_args.split_groups:
             channel_groups = layout['channel_groups']
             if 'dead_channels' in layout:
@@ -296,8 +314,12 @@ def main(args):
 
     out_fext = format_output.FMT_FEXT
     out_prefix = cli_args.out_prefix if cli_args.out_prefix is not None else op.basename(cli_args.target[0])
+
     if out_prefix =='':
         out_prefix ='lost_name'
+    if '.' in out_prefix:
+        out_prefix = out_prefix.split('.')[0]
+
     logger.debug('Prefix: {}'.format(out_prefix))
     default_template = DEFAULT_FULL_TEMPLATE if cli_args.fname_channels else DEFAULT_SHORT_TEMPLATE
     fname_template = default_template if cli_args.template_fname is None else cli_args.template_fname
@@ -318,7 +340,7 @@ def main(args):
         output_fname = ''.join([output_basename, out_fext])
         output_file_path = op.join(out_path, output_fname)
 
-        with open(output_file_path + '.dman', 'w') as dman_offset_file:
+        with open(output_file_path + '.dataman.offsets', 'w') as dman_offset_file:
             dman_offset_file.write('target_path, num_samples\n')
 
         duration_written = 0
@@ -356,22 +378,6 @@ def main(args):
         with open(op.join(out_path, output_basename + '.prb'), 'w') as prb_out:
             prb_out.write('dead_channels = {}\n'.format(pprint.pformat(dead_channels)))
             prb_out.write('channel_groups = {}'.format(pprint.pformat(cg_out)))
-
-        # FIXME: Generation of .prm
-        # For now in separate script. Should take a .prm template that will be adjusted
-        # # Template parameter file
-        # prm_file_input = cli_args.params
-        # with open(op.join(out_path, output_basename + '.prm'), 'w') as prm_out:
-        #     if prm_file_input:
-        #         f = open(prm_file_input, 'r')
-        #         prm_in = f.read()
-        #         f.close()
-        #     else:
-        #         prm_in = pkgr.resource_string('config', 'default.prm').decode()
-        #     prm_out.write(prm_in.format(experiment_name=output_basename,
-        #                                 probe_file=output_basename + '.prb',
-        #                                 raw_file=output_file_path,
-        #                                 n_channels=len(channel_group['channels'])))
 
         logger.debug('Done! Total data length written: {}'.format(util.fmt_time(total_duration_written)))
 

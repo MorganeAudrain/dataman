@@ -20,30 +20,37 @@ from dataman.lib.util import butter_bandpass
 logger = logging.getLogger(__name__)
 
 # disable font_manager spamming the debug log
-logging.getLogger('matplotlib').disabled = True
+# logging.getLogger('matplotlib').disabled = True
 logging.getLogger('matplotlib.fontmanager').disabled = True
+
+MINIMUM_NOISE_THRESHOLD = 5
 
 
 def get_batches(length, batch_size):
+    """Given length of e.g. an array and a batch size, return size of batches
+    """
     batches = [bc * batch_size for bc in range(length // batch_size)]
     if length - (length // batch_size) * batch_size:
         batches.append(length - length % batch_size)
     return batches
 
 
-
-def estimate_noise(arr, lc=300, hc=6000, num_channels=4, fs=3e4, uV_factor=0.195):
-    ne_binsize = int(fs)  # noise estimation binsize
+def estimate_noise(arr, lc=300, hc=6000, num_channels=4, fs=3e4, microvolt_factor=0.195, ne_bin_s=1):
+    """Calulate MAD (mean absolute deviation) of high pass filtered array.
+    Returns list of bin-sized estimates in uV.
+    """
+    ne_bin_size = int(ne_bin_s * fs)  # noise estimation bin size
 
     # Filter
     b, a = butter_bandpass(lc, hc, fs)
-    batches = get_batches(arr.shape[0], ne_binsize)
+    batches = get_batches(arr.shape[0], ne_bin_size)
     ne = np.zeros((len(batches), num_channels))
     nfac = 1 / 0.6745
 
+    # Calculate MAD (mean absolute deviation) over chunks
     for n, batch in enumerate(tqdm(batches, leave=False, desc='1) estimating')):
-        n_samples = min(ne_binsize, arr.shape[0] - batch)
-        filtered = signal.filtfilt(b, a, arr[batch:batch + n_samples, :].astype(np.double), axis=0) * uV_factor
+        batch_size = min(ne_bin_size, arr.shape[0] - batch)
+        filtered = signal.filtfilt(b, a, arr[batch:batch + batch_size, :].astype(np.double), axis=0) * microvolt_factor
         for ch in range(num_channels):
             ne[n, ch] = np.median(abs(filtered[:, ch]) * nfac)
     return ne
@@ -57,13 +64,14 @@ def wv_com(arr):
 
 
 def wv_alignment(w, method='centroid', kernel_width=11, interp_f=None):
+    """Given approximate timestamp of a spike, find the accurate peak position of the interpolated signal
+    given an alignment method. Available methods are 'min' for minimum and 'centroid' for centroid filter.
+    """
     # channel with highest amplitude
     ch = np.min(w, axis=0).argmin()
     y = w[:, ch]
 
-    # Minimum alignment filter
-    #
-    # Peak negative amplitude
+    # Minimum alignment filter, i.e. peak negative amplitude
     if method == 'min':
         if not interp_f:
             m = np.argmin(y)
@@ -72,7 +80,6 @@ def wv_alignment(w, method='centroid', kernel_width=11, interp_f=None):
             raise NotImplementedError
 
     # Centroid alignment method
-    #
     # Convolve the waveform with a linear filter and find zero crossing
     elif method == 'centroid':
         # TODO: Use channel energy for weighted decisions?
@@ -96,155 +103,32 @@ def wv_alignment(w, method='centroid', kernel_width=11, interp_f=None):
         raise NotImplementedError
 
 
-# def detect_spikes(arr, thresholds, fs=3e4, uV_factor=0.195, chunk_size_s=60, lc=300, hc=6000):
-#     chunk_size = int(chunk_size_s * fs)  # chunk size for detection
-#
-#     use_thr = thresholds
-#     max_thr = use_thr * 8
-#
-#     waveform_chunks = []
-#     timestamp_chunks = []
-#
-#     spikes_per_chunk = []
-#     rejections = 0
-#
-#     INTERP_F = 4
-#     b, a = butter_bandpass(lc, hc, fs)
-#
-#     # add padding samples for later interpolation
-#     s_pad = 0
-#     n_samples = 32 + 2 * s_pad
-#
-#     end = arr.shape[0]
-#
-#     batches = [b * chunk_size for b in range(end // chunk_size)]
-#     if arr.shape[0] - (arr.shape[0] // chunk_size) * chunk_size:
-#         batches.append(arr.shape[0] - arr.shape[0] % chunk_size)
-#
-#     for batch in tqdm(batches, leave=False, desc='extraction'):
-#         start = batch
-#         end = start + min(chunk_size, arr.shape[0] - start)
-#
-#         # Filtering and Detection
-#         filtered = signal.filtfilt(b, a, arr[start:end, :].astype(np.double), axis=0) * uV_factor
-#
-#         # Merge threshold crossings
-#         # TODO: Only merge valid channels!
-#         crossings = np.sum(filtered < -use_thr, axis=1)
-#         crossings = np.clip(crossings, 0, 1)
-#
-#         # make sure crossings in the first 30 samples are ignored to avoid wrong start
-#         crossings[:30] = 0
-#
-#         # Look for threshold crossing "onset"
-#         deltas = np.diff(crossings)
-#         xr_starts = (deltas > 0).nonzero()[0]
-#         xr_ends = (deltas < 0).nonzero()[0]
-#
-#         assert len(xr_starts) == len(xr_ends)
-#         spike_idx = (np.array([xr_starts, xr_ends]).T.mean(axis=1)).astype(np.int64)
-#
-#         # Check if last spike is too close to boundary
-#         while len(spike_idx) and spike_idx[-1] + 22 >= chunk_size:
-#             spike_idx = spike_idx[:-1]
-#             rejections += 1
-#
-#         spikes_per_chunk.append(len(spike_idx))
-#
-#         if not len(spike_idx):
-#             continue
-#
-#         # Extract waveforms
-#         n_spikes = spike_idx.shape[0]
-#         bc_samples = np.arange(-10 - s_pad, 22 + s_pad).reshape([1, n_samples])
-#         bc_spikes = spike_idx.reshape([n_spikes, 1])
-#
-#         idc = bc_samples + bc_spikes
-#
-#         try:
-#             wv = filtered[idc]
-#         except IndexError:
-#             print(spike_idx[-1] + 22)
-#             break
-#
-#         # Temporary arrays
-#         spk_ts = np.zeros(n_spikes, dtype=np.int64)
-#         min_idx = np.zeros(n_spikes, dtype=np.int16)
-#
-#         x = np.linspace(0, n_samples, n_samples)
-#         wv_f_interp = interpolate.interp1d(x, wv, axis=1, kind='cubic')
-#
-#         x_interp = np.linspace(0, n_samples, n_samples * INTERP_F)
-#         wv_interp = wv_f_interp(x_interp)
-#
-#         reject = np.zeros(len(spk_ts))
-#         for n in range(len(spk_ts)):  # tnrange(n_spikes)
-#             # interpolated waveform
-#             w = wv_interp[n]
-#
-#             # interpolated minimum
-#             mins = np.min(w, axis=0)
-#
-#             # index of minimum of channel with largest amplitude valley
-#             ch_sel = np.argmin(mins)
-#             idx = np.argmin(w[:, ch_sel])
-#             min_idx[n] = idx
-#
-#             if np.any(mins < -max_thr):
-#                 reject[n] = True
-#                 rejections += 1
-#
-#         spk_ts = spike_idx - 10 + np.round(min_idx / INTERP_F).astype(np.int64)
-#         spk_ts = spk_ts[np.logical_not(reject)]
-#
-#         # Check again if last spike is too close to boundary
-#         while len(spk_ts) and spk_ts[-1] + 22 >= chunk_size:
-#             spk_ts = spk_ts[:-1]
-#             rejections += 1
-#
-#         bc_samples = np.arange(-10 - s_pad, 22 + s_pad).reshape([1, n_samples])
-#         bc_spikes = spk_ts.reshape([spk_ts.shape[0], 1])
-#
-#         idc = bc_samples + bc_spikes
-#
-#         spk_wv = filtered[idc]
-#
-#         waveform_chunks.append(spk_wv)
-#         timestamp_chunks.append(spk_ts + int(start))
-#
-#     waveforms = np.vstack(waveform_chunks)
-#     timestamps = np.concatenate(timestamp_chunks) / fs * 10000  # convert to sampling rate and MClust time format
-#
-#     # Reorder timestamps and waveforms
-#     ts_order = np.argsort(timestamps)
-#     timestamps.sort()
-#     waveforms = waveforms[ts_order]
-#
-#     return waveforms, timestamps
-
-
-def detect_spikes(arr, thresholds, fs=3e4, chunk_size_s=60, lc=300, hc=6000, s_pre=10, s_post=22,
-                  reject_overlap=16, align='centroid'):
+def detect_spikes(arr, min_thresholds, max_sd=18, fs=3e4, chunk_size_s=60, chunk_overlap_s=0.05, lc=300, hc=6000,
+                  s_pre=10, s_post=22, reject_overlap=16, align='min'):
+    """Given wideband signal, find peaks (minima) in the high-pass filtered signal. Returns a list of
+    curated timestamps to reject duplicates and overlapping spikes.
+    """
     # TODO: Interpolation
     # TODO: Maximum artifact rejection
     # TODO: Return rejected timestamps
 
     chunk_size = int(chunk_size_s * fs)  # chunk size for detection
 
-    uV_factor = 0.195
-    use_thr = thresholds / uV_factor
-    max_thr = use_thr * 8
+    microvolt_factor = 0.195
+    use_thr = min_thresholds / microvolt_factor
 
-    # waveform_chunks = []
     timestamps = []
     crs = []
 
-    rejections = 0
+    max_thr = use_thr * max_sd
+    if max_thr is not None or max_thr != 0:
+        logger.warning('Maximum rejection for spike detection not implemented.')
+    # # waveform_chunks = []
+    # rejections = 0
 
     b, a = butter_bandpass(lc, hc, fs)
 
     # samples to cut around detection (threshold crossing)
-    n_samples = s_pre + s_post
     bc_samples = np.arange(-s_pre, s_post).reshape([1, -1])
 
     # Chunks will have partial overlap.
@@ -254,7 +138,7 @@ def detect_spikes(arr, thresholds, fs=3e4, chunk_size_s=60, lc=300, hc=6000, s_p
     #                                |o|--- chunk 3 ---|
     #                                                end
     # Spikes with peak in the |x| region will be ignored
-    chunk_overlap = int(0.05 * fs)  # 50 ms chunk boundary overlap
+    chunk_overlap = int(chunk_overlap_s * fs)  # 50 ms chunk boundary overlap
 
     # Gather chunk start and ends
     end = arr.shape[0]
@@ -284,7 +168,7 @@ def detect_spikes(arr, thresholds, fs=3e4, chunk_size_s=60, lc=300, hc=6000, s_p
         # Warning if no spikes were found. That's suspicious given how we calculate the threshold.
         n_spikes = xr_starts.shape[0]
         if not n_spikes:
-            logger.warning('No spikes in chunk {} @ [{} to {}]'.format(n_chunk, b_start, b_end))
+            logger.warning(f'No spikes in chunk {n_chunk} @ [{b_start} to {b_end}]')
             continue
 
         # Extract preliminary waveforms
@@ -295,7 +179,7 @@ def detect_spikes(arr, thresholds, fs=3e4, chunk_size_s=60, lc=300, hc=6000, s_p
         try:
             wv = filtered[idc]
         except IndexError:
-            logger.error('Spikes out of bounds in chunk {} @ [{} to {}]'.format(n_chunk, b_start, b_end))
+            logger.error(f'Spikes out of bounds in chunk {n_chunk} @ [{b_start} to {b_end}]')
             break
 
         # Alignment
@@ -316,25 +200,30 @@ def detect_spikes(arr, thresholds, fs=3e4, chunk_size_s=60, lc=300, hc=6000, s_p
 
     timestamps = np.sort(np.concatenate(timestamps))
 
-    tdif = np.diff(timestamps) > reject_overlap
+    ts_diff = np.diff(timestamps) > reject_overlap
 
-    too_close = timestamps.shape[0] - np.sum(tdif)
+    too_close = timestamps.shape[0] - np.sum(ts_diff)
     logger.warning('{} ({:.1f}%) spikes rejected due to >{} sample overlap'.format(
         too_close, too_close / timestamps.shape[0] * 100, reject_overlap))
 
-    valids = timestamps[1:][tdif]
-    valids = np.insert(valids, 0, timestamps[0])
+    valid_timestamps = timestamps[1:][ts_diff]
+    valid_timestamps = np.insert(valid_timestamps, 0, timestamps[0])
 
-    return valids
+    return valid_timestamps
 
 
-def extract_waveforms(timestamps, arr, outpath, s_pre=8, s_post=24, lc=300, hc=6000, chunk_size_s=60, fs=3e4):
+def extract_waveforms(timestamps, arr, outpath, s_pre=10, s_post=22, lc=300, hc=6000, chunk_size_s=60,
+                      chunk_overlap_s=0.05, fs=3e4):
+    """Extracts waveforms from raw signal around s_pre->s_post samples of spike trough. Waveforms and timestamps
+    are stored directly in .mat files.
+    """
     assert max(timestamps) + s_post < arr.shape[0]
     assert min(timestamps) - s_pre >= 0
 
-    chunk_size = int(chunk_size_s * fs)
+    if s_pre + s_post != 32:
+        logger.warning(f'Number of waveforms samples {s_pre}+{s_post} != 32 as expected by MClust!')
 
-    n_waveforms = timestamps.shape[0]
+    chunk_size = int(chunk_size_s * fs)
     n_samples = s_pre + s_post
     n_channels = arr.shape[1]
 
@@ -343,25 +232,27 @@ def extract_waveforms(timestamps, arr, outpath, s_pre=8, s_post=24, lc=300, hc=6
 
 
     # samples to cut around detection (threshold crossing)
-    n_samples = s_pre + s_post
     bc_samples = np.arange(-s_pre, s_post).reshape((1, n_samples))
 
     end = arr.shape[0]
     chunk_starts = [cs * chunk_size for cs in range(ceil(end / chunk_size))]
-    chunk_overlap = int(0.05 * fs)
+    chunk_overlap = int(chunk_overlap_s * fs)
 
     # prepare the mat file
     if os.path.exists(outpath):
         raise FileExistsError('Mat file already exists. Exiting.')
 
+    # TODO: Save additional metadata alongside waveforms, e.g. thresholds, version, original paths
     h5s.savemat(str(outpath), {'n': len(timestamps),
-                               'index': np.double((timestamps - s_pre) / 3),
+                               'index': np.double((timestamps - s_pre) / 3),  # convert to MClust time domain
                                'readme': 'Written by dataman.',
                                # 'original_path': str(path)
                                }, compress=False)
 
+    n_samples_concat = n_samples * n_channels
     with h5.File(str(outpath), 'a') as hf:
-        hf.create_dataset('spikes', (128, len(timestamps)), maxshape=(128, None), dtype='int16')
+        hf.create_dataset('spikes', (n_samples_concat, len(timestamps)), maxshape=(n_samples_concat, None),
+                          dtype='int16')
         for n_chunk, start in enumerate(tqdm(chunk_starts, leave=False, desc='3) extracting')):
             # limits of core batch chunk
             b_start = start
@@ -385,12 +276,13 @@ def extract_waveforms(timestamps, arr, outpath, s_pre=8, s_post=24, lc=300, hc=6
             idc = bc_samples + peaks
 
             try:
-                hf['spikes'][:, min(ts_idc):max(ts_idc) + 1] = filtered[idc].reshape(-1, 128).T
+                hf['spikes'][:, min(ts_idc):max(ts_idc) + 1] = filtered[idc].reshape(-1, n_samples_concat).T
             except IndexError:
                 logger.error('Spikes out of bounds!')
                 break
-        waveforms = np.array(hf['spikes'], dtype='int16').reshape(s_pre+s_post, n_channels, -1)
+        waveforms = np.array(hf['spikes'], dtype='int16').reshape([s_pre + s_post, n_channels, -1])
     return waveforms
+
 
 def main(args):
     parser = argparse.ArgumentParser('Detect spikes in .dat files')
@@ -413,19 +305,24 @@ def main(args):
     logger.debug('Arguments: {}'.format(cli_args))
 
     stddev_factor = cli_args.threshold
-    logger.debug('Thresold factor   : ', stddev_factor)
+    logger.debug('Threshold factor  : {}'.format(stddev_factor))
 
     fs = cli_args.sampling_rate
-    logger.debug('Sampling rate     : ', fs)
+    logger.debug('Sampling rate     : {}'.format(fs))
 
     noise_percentile = cli_args.noise_percentile
-    logger.debug('Noise percentile : ', noise_percentile)
+    logger.debug('Noise percentile : {}'.format(noise_percentile))
 
     alignment_method = cli_args.align
-    logger.debug('Alignment method : ', alignment_method)
+    logger.debug('Alignment method : {}'.format(alignment_method))
 
     target = Path(cli_args.target)
-    tetrode_files = sorted(target.glob('tetrode*.dat'))
+    if target.is_file() and target.exists():
+        tetrode_files = [target]
+        target = target.parent
+        logger.debug('Using single file mode with {}'.format(target))
+    else:
+        tetrode_files = sorted(target.glob('tetrode*.dat'))
 
     start = int(cli_args.start * fs) if cli_args.start is not None else 0
     end = int(cli_args.end * fs) if cli_args.end is not None else -1
@@ -457,7 +354,7 @@ def main(args):
 
         logger.debug('Creating waveform figure...')
         report_string += '<h1>Recording</h1>\n'
-        report_string += 'Length: {:.2f} Msamples, {:.2f} minutes'.format(wb.shape[0] / 1e6, wb.shape[0] / fs / 60)
+        report_string += 'Length: {:.2f} MSamples, {:.2f} minutes'.format(wb.shape[0] / 1e6, wb.shape[0] / fs / 60)
 
         report_string += f'<h1>{tetrode_file.name}</h1>'
         report_string += str(tetrode_file) + '<br>'
@@ -468,10 +365,15 @@ def main(args):
         del fig
 
         logger.debug('Creating noise estimation figure...')
-        # Noise estimation for threshold calculation  ################################
+        # Noise estimation for threshold calculation
         noise = estimate_noise(wb)
 
-        noise_perc = np.percentile(noise, noise_percentile, axis=0)
+        # Calculate threshold based on all segments with a minimum amount of noise
+        # to not incorporate zeroed out segments
+        ne_nz = noise.sum(axis=1) > MINIMUM_NOISE_THRESHOLD
+        non_zero_ne = noise[ne_nz, :]
+        noise_perc = np.percentile(non_zero_ne, noise_percentile, axis=0)
+
         ne_min = np.min(noise, axis=0)
         ne_max = np.max(noise, axis=0)
         ne_std = np.std(noise, axis=0)
@@ -499,7 +401,7 @@ def main(args):
         logger.info(f'{tetrode_file.name}: {len(timestamps)} spikes, {sps:.1f} sps')
 
         # Spike Waveform Extraction ##################################################
-        waveforms = extract_waveforms(timestamps, wb, outpath=matpath, s_pre=8, s_post=24, fs=fs)
+        waveforms = extract_waveforms(timestamps, wb, outpath=matpath, s_pre=10, s_post=22, fs=fs)
 
         # Create waveform plots
         logger.debug('Creating waveform plots')

@@ -4,6 +4,7 @@
 
 testing/
 data/
+dataman/resources/cluster_defaults_local.yml
 
 #############
 ## Python

@@ -1,7 +1,7 @@
 import base64
 import io
+import logging
 import urllib
-from itertools import combinations
 
 import datashader as ds
 import numpy as np
@@ -12,6 +12,13 @@ from matplotlib import pyplot as plt, image as mpimg, cm
 from dataman.detect.report import DS_CMAPS
 
 plt.rcParams['figure.figsize'] = 15, 8
+
+logger = logging.getLogger(__name__)
+
+# disable font_manager spamming the debug log
+# logging.getLogger('matplotlib').disabled = True
+logging.getLogger('matplotlib.fontmanager').disabled = True
+logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 def fig2html(fig):
@@ -77,7 +84,8 @@ def ds_shade_waveforms(waveforms, canvas_width=400, canvas_height=400, color_map
     for ch in range(n_channels):
         df = pd.DataFrame(waveforms[:, ch, :].T)
         agg = cvs.line(df, x=np.arange(n_samples), y=list(range(n_samples)), agg=ds.count(), axis=1)
-        img = ds.transfer_functions.shade(agg, how=how, cmap=plt.cm.get_cmap(color_maps[ch]))
+        with np.errstate(invalid='ignore'):
+            img = tf.shade(agg, how=how, cmap=plt.cm.get_cmap(color_maps[ch]))
         shades.append(img)
 
     # If we wanted to use all channels together, we have to create a categorical column for the selection
@@ -90,12 +98,18 @@ def ds_shade_waveforms(waveforms, canvas_width=400, canvas_height=400, color_map
 
 
 def ds_shade_feature(fet_data, x_range=(-2, 8), y_range=(-2, 8),
-                 canvas_width=300, canvas_height=300, color_map='viridis', how='log'):
+                     canvas_width=300, canvas_height=300, color_map='viridis', how='log'):
     """Agg and shade a single feature view. fet_data needs to be two-columnar pandas DataFrame."""
     cmap = cm.get_cmap(color_map)
-    cvs = ds.Canvas(plot_width=canvas_width, plot_height=canvas_height, x_range=x_range, y_range=y_range)
-    agg = cvs.points(fet_data, fet_data.columns[0], fet_data.columns[1], agg=ds.count())
-    return tf.shade(agg, how=how, cmap=cmap)
+    try:
+        cvs = ds.Canvas(plot_width=canvas_width, plot_height=canvas_height, x_range=x_range, y_range=y_range)
+        agg = cvs.points(fet_data, fet_data.columns[0], fet_data.columns[1], agg=ds.count())
+        with np.errstate(invalid='ignore'):
+            img = tf.shade(agg, how=how, cmap=cmap)
+    except ZeroDivisionError:
+        logger.warning(f'Zero Division Error in ds_shade_feature for columns {tuple(fet_data.columns)}. Invalid plot.')
+        img = None
+    return img
 
 
 # def ds_shade_feature(fet_data, timestamps, x_range=(-2, 8), y_range=(-2, 8),
@@ -128,13 +142,15 @@ def ds_plot_features(shades, how, fet_titles, y_min=-500, y_max=400, plot_width=
     n_cols = min(len(shades), max_cols)
     n_rows = max(len(shades) // n_cols, 1)
 
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(plot_width, plot_height+2*n_rows))
-    # fig.suptitle('Density "{}" scaled.'.format(how), fontsize=10)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(plot_width, plot_height + 2 * n_rows))
     for n, ax in enumerate(axes.flat):
         # cast rasterized shade into png image as workaround to false color application by imshow??
         # TODO: That can't be the best way to go about this!!
-        img_arr = mpimg.imread(shades[n].to_bytesio('png'))
+        if shades[n] is None:
+            logger.warning(f'ds_plot_feature received "None" datashader shades[{n}], replacing with zeros array.')
+            img_arr = np.zeros((400, 400, 3), dtype='uint8')
+        else:
+            img_arr = mpimg.imread(shades[n].to_bytesio('png'))
         h, w = img_arr.shape[:2]
 
         ax.imshow(img_arr)
