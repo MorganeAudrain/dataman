@@ -62,7 +62,6 @@ def continuous_to_dat(target_metadata, output_path, channel_group,
                       file_mode='w', chunk_records=1000, duration=0,
                       dead_channel_ids=None, zero_dead_channels=True):
     start_t = time.time()
-
     # Logging
     file_handler = logging.FileHandler(output_path + '.log')
     formatter = logging.Formatter('%(message)s')
@@ -113,7 +112,7 @@ def continuous_to_dat(target_metadata, output_path, channel_group,
                     else min(n_blocks, int(duration * sampling_rate // block_size))
                 if records_left < 1:
                     epsilon = 1 / sampling_rate * block_size * 1000
-                    logger.warning(
+                    logger.warning(at
                         "Remaining duration limit ({:.0f} ms) less than duration of single block ({:.0f} ms). "
                         "Skipping target.".format(duration * 1000, epsilon))
                     return 0
@@ -315,8 +314,12 @@ def main(args):
 
     out_fext = format_output.FMT_FEXT
     out_prefix = cli_args.out_prefix if cli_args.out_prefix is not None else op.basename(cli_args.target[0])
+
+    if out_prefix =='':
+        out_prefix ='lost_name'
     if '.' in out_prefix:
         out_prefix = out_prefix.split('.')[0]
+
     logger.debug('Prefix: {}'.format(out_prefix))
     default_template = DEFAULT_FULL_TEMPLATE if cli_args.fname_channels else DEFAULT_SHORT_TEMPLATE
     fname_template = default_template if cli_args.template_fname is None else cli_args.template_fname
