@@ -87,28 +87,31 @@ def main(args):
     if cli_args.KK is None and cli_args.cluster:
         raise FileNotFoundError('Could not find the KlustaKwik executable on the path, and none given.')
 
-    # Building KlustaKwik Command
-    # 1) Find KlustaKwik executable
-    mclust_path = Path('C:/Users/reichler/src/MClustPipeline/MClust/KlustaKwik')
-    pf_system = platform.system()
-    logger.debug(f'Platform: {pf_system}')
-    if pf_system == 'Linux':
-        kk_executable = mclust_path / cfg['KLUSTAKWIK_PATH_LINUX']
-    elif pf_system == 'Windows':
-        kk_executable = mclust_path / cfg['KLUSTAKWIK_PATH_WINDOWS']
-    else:
-        raise NotImplemented(f'No KlustaKwik executable defined for platform {pf_system}')
-    logger.debug(kk_executable)
+    # # Building KlustaKwik Command
+    # # 1) Find KlustaKwik executable
+    # mclust_path = Path('C:/Users/reichler/src/MClustPipeline/MClust/KlustaKwik')
+    # pf_system = platform.system()
+    # logger.debug(f'Platform: {pf_system}')
+    # if pf_system == 'Linux':
+    #     kk_executable = mclust_path / cfg['KLUSTAKWIK_PATH_LINUX']
+    # elif pf_system == 'Windows':
+    #     kk_executable = mclust_path / cfg['KLUSTAKWIK_PATH_WINDOWS']
+    # else:
+    #     raise NotImplemented(f'No KlustaKwik executable defined for platform {pf_system}')
+    # logger.debug(kk_executable)
+
+    kk_executable = cli_args.KK
 
     # 2) Find target file stem
     working_dir = Path(cli_args.target).resolve()
-    logger.debug(f'Base path: {working_dir}')
     if working_dir.is_file() and working_dir.exists():
         tetrode_files = [working_dir.name]
         working_dir = working_dir.parent
         logger.debug(f'Using single file mode with {str(tetrode_files[0])}')
     else:
         tetrode_files = sorted([tf.name for tf in working_dir.glob(cfg['TARGET_FILE_GLOB'])])
+
+    logger.debug(f'Working dir: {working_dir}')
 
     # No parallel/serial execution supported right now
     if len(tetrode_files) > 1:
@@ -125,7 +128,9 @@ def main(args):
 
     # 4) combine executable and arguments
     kk_cmd = f'{kk_executable} {tetrode_file_stem} -ElecNo {tetrode_file_elecno}'
+    kk_cmd_list = kk_cmd.split(' ')
     logger.debug(f'KK COMMAND: {kk_cmd}')
+    logger.debug(f'KK COMMAND LIST: {kk_cmd_list}')
 
     # Call KlustaKwik and gather output
     # TODO: Use communicate to interact with KK, i.e. write to log and monitor progress
@@ -139,11 +144,11 @@ def main(args):
 
     # EXECUTE KLUSTAKWIK
     if not clu_file.exists() or cli_args.force:
-        kk_call = subprocess.run(kk_cmd.split(' '), stderr=subprocess.PIPE, stdout=stdout)
+        kk_call = subprocess.run(kk_cmd_list, stderr=subprocess.PIPE, stdout=stdout)
         kk_error = kk_call.returncode
 
-        logger.debug('Writing klustakwik log file')
-        with open(clu_file + '.log', 'w') as log_file:
+        logger.debug('Writing KlustaKwik log file')
+        with open(clu_file.with_suffix('.log'), 'w') as log_file:
             log_file.write(kk_call.stderr.decode('ascii'))
 
         # Check call return code and output

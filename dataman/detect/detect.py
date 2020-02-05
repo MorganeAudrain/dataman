@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # logging.getLogger('matplotlib').disabled = True
 logging.getLogger('matplotlib.fontmanager').disabled = True
 
+MINIMUM_NOISE_THRESHOLD = 5
+
 
 def get_batches(length, batch_size):
     """Given length of e.g. an array and a batch size, return size of batches
@@ -349,7 +351,7 @@ def main(args):
 
         logger.debug('Creating waveform figure...')
         report_string += '<h1>Recording</h1>\n'
-        report_string += 'Length: {:.2f} Msamples, {:.2f} minutes'.format(wb.shape[0] / 1e6, wb.shape[0] / fs / 60)
+        report_string += 'Length: {:.2f} MSamples, {:.2f} minutes'.format(wb.shape[0] / 1e6, wb.shape[0] / fs / 60)
 
         report_string += f'<h1>{tetrode_file.name}</h1>'
         report_string += str(tetrode_file) + '<br>'
@@ -360,10 +362,15 @@ def main(args):
         del fig
 
         logger.debug('Creating noise estimation figure...')
-        # Noise estimation for threshold calculation  ################################
+        # Noise estimation for threshold calculation
         noise = estimate_noise(wb)
 
-        noise_perc = np.percentile(noise, noise_percentile, axis=0)
+        # Calculate threshold based on all segments with a minimum amount of noise
+        # to not incorporate zeroed out segments
+        ne_nz = noise.sum(axis=1) > MINIMUM_NOISE_THRESHOLD
+        non_zero_ne = noise[ne_nz, :]
+        noise_perc = np.percentile(non_zero_ne, noise_percentile, axis=0)
+
         ne_min = np.min(noise, axis=0)
         ne_max = np.max(noise, axis=0)
         ne_std = np.std(noise, axis=0)
