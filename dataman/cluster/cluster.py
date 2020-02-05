@@ -41,7 +41,7 @@ def load_yaml(yaml_path):
 
 def main(args):
     parser = argparse.ArgumentParser('Clustering with KlustaKwik')
-    parser.add_argument('target', help='Target path, either path containing tetrode files, or single tetrodeXX.mat')
+    parser.add_argument('target', help='Target path, either path containing tetrode files, or single tetrodeXX.fet.0')
     parser.add_argument('--KK', help='Path to KlustaKwik executable')
     parser.add_argument('--features', nargs='*', help='list of features to use for clustering')
     parser.add_argument('--config', help='Path to configuration file')
